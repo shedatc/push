@@ -1,5 +1,4 @@
 import Data.Char
-import qualified Data.Foldable as F
 import Data.List
 import System.Process
 import System.Directory
@@ -86,13 +85,18 @@ rsyncExcludes conf = do haveIncludes <- haveOption "excludes"
                           where haveOption = haveOption' conf
                                 optionPath = optionPath' conf
 
+accumulateOptions :: String -> [String] -> String
+accumulateOptions acc    []  = acc
+accumulateOptions ""  (o:os) = accumulateOptions o os
+accumulateOptions acc (o:os) = accumulateOptions (concat [acc, " ", o]) os
+
 rsyncOptions :: FilePath -> IO String
 rsyncOptions conf = do s <- sequence $ map (\f -> f conf) [rsyncBaseOptions,
                                                            rsyncDeleteOption,
                                                            rsyncAdditionalOptions,
                                                            rsyncIncludes,
                                                            rsyncExcludes]
-                       return . (intercalate " ") . concat $ s
+                       return $ foldl accumulateOptions "" s
 
 remotePath :: FilePath -> IO String
 remotePath root = do haveRemotePath <- haveOption "remote-path"
