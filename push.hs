@@ -3,24 +3,24 @@ import Data.List
 import System.Directory
 import System.FilePath.Posix
 
--- Locate the root directory starting from the current directory.
-locateRoot :: IO (Maybe FilePath)
-locateRoot = do d <- getCurrentDirectory
-                locateRoot' d
+-- Locate the configuration directory starting from the current directory.
+locateConf :: IO (Maybe FilePath)
+locateConf = do d <- getCurrentDirectory
+                locateConf' d
 
--- Locate the root directory starting from the given directory (d).
-locateRoot' :: FilePath -> IO (Maybe FilePath)
-locateRoot' d = do d'    <- canonicalizePath d
+-- Locate the configuration directory starting from the given directory (d).
+locateConf' :: FilePath -> IO (Maybe FilePath)
+locateConf' d = do d'    <- canonicalizePath d
                    found <- doesDirectoryExist $ d' </> ".push"
                    if found                                 -- Hit!
-                   then return (Just d')
+                   then return (Just (d' </> ".push"))
                    else if d' == "/"                        -- Miss! Cannot dig deeper, we hit the filesystem root.
                         then return Nothing
-                        else locateRoot' $ d' </> ".."      -- Miss! Dig deeper.
+                        else locateConf' $ d' </> ".."      -- Miss! Dig deeper.
 
--- Locate the configuration directory bound to the given root directory (root).
-locateConf :: FilePath -> FilePath
-locateConf root = root </> ".push"
+-- Locate the root directory bound to the given configuration directory (conf).
+locateRoot :: FilePath -> IO FilePath
+locateRoot conf = canonicalizePath $ conf </> ".."
 
 -- Return the value of the required configuration parameter with the given name
 -- (name), looking at the given configuration directory (conf).
@@ -47,13 +47,13 @@ haveOption' :: FilePath -> String -> IO Bool
 haveOption' conf name = do doesFileExist f
                              where f = optionPath' conf name
 
-explodeRoot :: FilePath -> IO [FilePath]
-explodeRoot root = do wantToDelegate <- haveOption "delegate"
+-- Explode the configuration into a list of configuration.
+explodeConf :: FilePath -> IO [FilePath]
+explodeConf conf = do wantToDelegate <- haveOption "delegate"
                       if wantToDelegate
                         then explodeDelegateFile $ optionPath "delegate"
-                        else return [root]
-  where conf       = locateConf root
-        haveOption = haveOption' conf
+                        else return [conf]
+  where haveOption = haveOption' conf
         optionPath = optionPath' conf
 
 explodeDelegateFile :: FilePath -> IO [FilePath]
@@ -114,34 +114,32 @@ rsyncOptions conf = do options <- sequence $ rsyncOptionsBuilders conf
                        return $ foldl accumulateOptions "" options
 
 remotePath :: FilePath -> IO String
-remotePath root = do haveRemotePath <- haveOption "remote-path"
+remotePath conf = do haveRemotePath <- haveOption "remote-path"
                      if haveRemotePath
                        then param "remote-path"
-                       else return $ root
-                       where conf       = locateConf root
-                             haveOption = haveOption' conf
+                       else locateRoot conf
+                       where haveOption = haveOption' conf
                              param      = param' conf
 
 buildRsyncCommandLine :: FilePath -> IO String
-buildRsyncCommandLine root = do putStrLn $ "Conf: " ++ conf
-                                options <- rsyncOptions conf
+buildRsyncCommandLine conf = do options <- rsyncOptions conf
                                 host    <- param "target-host"
-                                path    <- remotePath root
-                                return $ intercalate " " ["cd", root, "&&", "rsync", options, "./", concat [host, ":", path]]
-                                  where conf  = locateConf root
-                                        param = param' conf
+                                path    <- remotePath conf
+                                root    <- locateRoot conf
+                                return $ intercalate " " ["cd", root, "&&", "rsync", options, "./", concat [host, ":", path ++ "/"]]
+                                  where param = param' conf
 
 -- Trigger a push from the given root directory (root).
 push :: FilePath -> IO ()
-push root = do putStrLn $ "Root: " ++ root
-               cmdline <- buildRsyncCommandLine root
+push conf = do putStrLn $ "Conf: " ++ conf
+               cmdline <- buildRsyncCommandLine conf
                putStrLn cmdline
 
 sequencePush :: IO [FilePath] -> IO ()
-sequencePush rs = do roots <- rs
-                     sequence_ $ map push roots
+sequencePush cs = do confs <- cs
+                     sequence_ $ map push confs
 
 main :: IO ()
-main = do br <- locateRoot
-          case br of Nothing       -> error "Missing root."
-                     Just baseRoot -> sequencePush $ explodeRoot baseRoot
+main = do bc <- locateConf
+          case bc of Nothing       -> error "Missing configuration."
+                     Just baseConf -> sequencePush $ explodeConf baseConf
