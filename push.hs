@@ -1,6 +1,5 @@
 import Data.Char
 import Data.List
-import System.Process
 import System.Directory
 import System.FilePath.Posix
 
@@ -49,6 +48,19 @@ haveOption' :: FilePath -> String -> IO Bool
 haveOption' conf name = do doesFileExist f
                              where f = optionPath' conf name
 
+explodeRoot :: FilePath -> IO [FilePath]
+explodeRoot root = do wantToDelegate <- haveOption "delegate"
+                      if wantToDelegate
+                        then explodeDelegateFile $ optionPath "delegate"
+                        else return [root]
+  where conf = locateConf root
+        haveOption = haveOption' conf
+        optionPath = optionPath' conf
+
+explodeDelegateFile :: FilePath -> IO [FilePath]
+explodeDelegateFile df = do content <- readFile df
+                            return $ lines content
+
 rsyncBaseOptions :: FilePath -> IO [String]
 rsyncBaseOptions conf = do options <- option "rsync-options"
                            case options of Nothing -> return defaultOptions
@@ -90,13 +102,17 @@ accumulateOptions acc    []  = acc
 accumulateOptions ""  (o:os) = accumulateOptions o os
 accumulateOptions acc (o:os) = accumulateOptions (concat [acc, " ", o]) os
 
+rsyncOptionsBuilders :: FilePath -> [IO [String]]
+rsyncOptionsBuilders conf = do builders <- [ rsyncBaseOptions,
+                                             rsyncDeleteOption,
+                                             rsyncAdditionalOptions,
+                                             rsyncIncludes,
+                                             rsyncExcludes ]
+                               return $ builders conf
+
 rsyncOptions :: FilePath -> IO String
-rsyncOptions conf = do s <- sequence $ map (\f -> f conf) [rsyncBaseOptions,
-                                                           rsyncDeleteOption,
-                                                           rsyncAdditionalOptions,
-                                                           rsyncIncludes,
-                                                           rsyncExcludes]
-                       return $ foldl accumulateOptions "" s
+rsyncOptions conf = do options <- sequence $ rsyncOptionsBuilders conf
+                       return $ foldl accumulateOptions "" options
 
 remotePath :: FilePath -> IO String
 remotePath root = do haveRemotePath <- haveOption "remote-path"
@@ -124,4 +140,5 @@ push root = do putStrLn $ "Root: " ++ root
 main :: IO ()
 main = do r <- locateRoot
           case r of Nothing   -> error "Missing root."
-                    Just root -> push root
+                    Just root -> do roots <- explodeRoot root
+                                    push $ roots !! 0
