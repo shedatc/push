@@ -20,8 +20,7 @@ locateRoot' d = do d'    <- canonicalizePath d
 
 -- Locate the configuration directory bound to the given root directory (root).
 locateConf :: FilePath -> FilePath
--- locateConf root = root </> ".push"
-locateConf _ = ".push"
+locateConf root = root </> ".push"
 
 -- Return the value of the required configuration parameter with the given name
 -- (name), looking at the given configuration directory (conf).
@@ -53,7 +52,7 @@ explodeRoot root = do wantToDelegate <- haveOption "delegate"
                       if wantToDelegate
                         then explodeDelegateFile $ optionPath "delegate"
                         else return [root]
-  where conf = locateConf root
+  where conf       = locateConf root
         haveOption = haveOption' conf
         optionPath = optionPath' conf
 
@@ -124,7 +123,8 @@ remotePath root = do haveRemotePath <- haveOption "remote-path"
                              param      = param' conf
 
 buildRsyncCommandLine :: FilePath -> IO String
-buildRsyncCommandLine root = do options <- rsyncOptions conf
+buildRsyncCommandLine root = do putStrLn $ "Conf: " ++ conf
+                                options <- rsyncOptions conf
                                 host    <- param "target-host"
                                 path    <- remotePath root
                                 return $ intercalate " " ["cd", root, "&&", "rsync", options, "./", concat [host, ":", path]]
@@ -137,8 +137,11 @@ push root = do putStrLn $ "Root: " ++ root
                cmdline <- buildRsyncCommandLine root
                putStrLn cmdline
 
+sequencePush :: IO [FilePath] -> IO ()
+sequencePush rs = do roots <- rs
+                     sequence_ $ map push roots
+
 main :: IO ()
-main = do r <- locateRoot
-          case r of Nothing   -> error "Missing root."
-                    Just root -> do roots <- explodeRoot root
-                                    push $ roots !! 0
+main = do br <- locateRoot
+          case br of Nothing       -> error "Missing root."
+                     Just baseRoot -> sequencePush $ explodeRoot baseRoot
